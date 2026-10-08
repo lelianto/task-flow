@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  description String?
+  status      String     @default("to_do")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+  auditLogs   AuditLog[]
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  taskId     String
+  actor      String
+  fromStatus String
+  toStatus   String
+  createdAt  DateTime @default(now())
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt, id])
+}
+
+model WorkflowSettings {
+  id                       Int      @id
+  allowBackwardTransitions Boolean  @default(false)
+  allowStatusSkipping      Boolean  @default(false)
+  updatedAt                DateTime @updatedAt
+}

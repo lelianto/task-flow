@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+playwright-report/
+test-results/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

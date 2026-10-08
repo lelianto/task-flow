@@ -1,0 +1,64 @@
+import cors from 'cors';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import type { PrismaClient } from '@prisma/client';
+import { ACTORS } from '@taskflow/shared';
+import { ZodError } from 'zod';
+import { prisma as defaultPrisma } from './lib/prisma.js';
+import { AppError } from './lib/errors.js';
+import { createTaskSchema, updateStatusSchema } from './modules/tasks/task.schema.js';
+import { TaskService } from './modules/tasks/task.service.js';
+import { workflowSettingsSchema } from './modules/settings/settings.schema.js';
+
+const ok = (data: unknown) => ({ data });
+
+export function createApp(db: PrismaClient = defaultPrisma) {
+  const app = express();
+  const tasks = new TaskService(db);
+  app.use(cors());
+  app.use(express.json());
+
+  app.get('/api/health', (_req, res) => res.json(ok({ status: 'ok' })));
+  app.get('/api/actors', (_req, res) => res.json(ok(ACTORS)));
+  app.get('/api/tasks', async (_req, res) => res.json(ok(await tasks.list())));
+  app.get('/api/tasks/:id', async (req, res) => res.json(ok(await tasks.get(req.params.id))));
+  app.post('/api/tasks', async (req, res) => {
+    const task = await tasks.create(createTaskSchema.parse(req.body));
+    res.status(201).json(ok(task));
+  });
+  app.patch('/api/tasks/:id/status', async (req, res) => {
+    const body = updateStatusSchema.parse(req.body);
+    res.json(ok(await tasks.updateStatus(req.params.id, body.status, body.actor)));
+  });
+  app.delete('/api/tasks/:id', async (req, res) => {
+    await tasks.remove(req.params.id);
+    res.status(204).send();
+  });
+  app.get('/api/tasks/:id/audit-logs', async (req, res) => res.json(ok(await tasks.auditLogs(req.params.id))));
+  app.get('/api/settings/workflow', async (_req, res) => {
+    const settings = await db.workflowSettings.findUnique({
+      where: { id: 1 },
+      select: { allowBackwardTransitions: true, allowStatusSkipping: true },
+    });
+    res.json(ok(settings));
+  });
+  app.patch('/api/settings/workflow', async (req, res) => {
+    const input = workflowSettingsSchema.parse(req.body);
+    const settings = await db.$transaction(async (tx) => tx.workflowSettings.upsert({
+      where: { id: 1 },
+      create: { id: 1, ...input },
+      update: input,
+      select: { allowBackwardTransitions: true, allowStatusSkipping: true },
+    }));
+    res.json(ok(settings));
+  });
+
+  app.use((_req, _res, next) => next(new AppError(404, 'ROUTE_NOT_FOUND', 'Route was not found.')));
+  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    void _next;
+    if (error instanceof ZodError) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Request validation failed.', details: error.issues } });
+    if (error instanceof AppError) return res.status(error.status).json({ error: { code: error.code, message: error.message, details: error.details } });
+    console.error(error);
+    return res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' } });
+  });
+  return app;
+}
