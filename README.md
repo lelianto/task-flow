@@ -2,7 +2,7 @@
 
 > Make every transition understandable, every decision intentional, and every change traceable.
 
-TaskFlow is an explainable internal task-management workspace built with React, Express, TypeScript, Prisma, and SQLite. It combines a responsive Kanban board, configurable workflow rules, operational task metadata, append-only activity history, and optional DeepSeek-powered audit explanations.
+TaskFlow is an explainable internal task-management workspace built with React, Express, TypeScript, Prisma, and SQLite. It combines a responsive Kanban board, a strict ordered workflow, operational task metadata, append-only activity history, and optional DeepSeek-powered audit explanations.
 
 The project was created for a full-stack take-home assignment. Its goal is not feature volume. Its goal is to demonstrate clear domain modeling, end-to-end consistency, transactional integrity, deliberate trade-offs, and code that can be explained confidently in a technical interview.
 
@@ -14,6 +14,7 @@ The project was created for a full-stack take-home assignment. Its goal is not f
 - [Architecture](#architecture)
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
+- [Deployment](#deployment)
 - [Available commands](#available-commands)
 - [Workflow rules](#workflow-rules)
 - [Data model and integrity](#data-model-and-integrity)
@@ -44,7 +45,7 @@ AI is deliberately subordinate to these principles. It explains verified events 
 - Search tasks client-side.
 - Move tasks through `To Do → Pending → In Progress → Done`.
 - Change status through drag-and-drop or an accessible status selector.
-- Soft-delete tasks while retaining their history.
+- Soft-delete tasks and inspect their retained history from a read-only Deleted view.
 - Mark tasks that require human attention and resolve the escalation explicitly.
 
 ### Explainable workflow
@@ -53,7 +54,7 @@ AI is deliberately subordinate to these principles. It explains verified events 
 - Invalid transitions are rejected by the backend even if frontend checks are bypassed.
 - Error messages explain the applicable rule, such as disabled backward transitions or disabled skipping.
 - Task details show available next states and explain why other destinations are unavailable.
-- Workflow settings provide an impact preview before the user saves them.
+- The workflow is fixed to one-step-forward transitions so neither the UI nor API can relax the assignment's domain rule.
 
 ### Immutable history
 
@@ -128,13 +129,13 @@ task-flow/
 │   │   ├── src/
 │   │   │   ├── db/              # local database preparation
 │   │   │   ├── lib/             # Prisma client and application errors
-│   │   │   └── modules/         # tasks, settings, and AI insights
+│   │   │   └── modules/         # tasks and AI insights
 │   │   └── tests/               # API integration tests
 │   └── web/
 │       └── src/
 │           ├── app/              # application shell and query client
 │           ├── components/       # reusable interaction components
-│           ├── features/         # tasks, settings, and operational insights
+│           ├── features/         # tasks and operational insights
 │           └── lib/              # typed API client
 ├── packages/
 │   └── shared/                   # framework-free types and workflow policy
@@ -145,7 +146,7 @@ task-flow/
 
 The backend is the source of truth. Frontend checks improve usability, but every transition and actor is validated again by the API.
 
-Status updates are intentionally pessimistic. A card changes columns only after the backend commits the task update and its audit record. This is slightly less immediate than optimistic UI, but it avoids ambiguous rollback behavior and keeps the interface aligned with persisted state.
+Status updates use an optimistic UI with rollback. A card moves immediately, then returns to its previous column if the backend rejects the transition. The backend remains authoritative and commits the status plus audit record atomically.
 
 ## Getting started
 
@@ -169,11 +170,11 @@ pnpm dev
 
 Open:
 
-- Web application: `http://localhost:5173`
+- Web application: `http://localhost:300`
 - API: `http://localhost:3001`
 - Health check: `http://localhost:3001/api/health`
 
-`pnpm db:setup` generates the Prisma client, creates the SQLite file when necessary, applies all migrations, enables the local SQLite settings, and ensures the singleton workflow configuration exists.
+`pnpm db:setup` generates the Prisma client, creates the SQLite file when necessary, applies all migrations, and enables the local SQLite settings.
 
 ## Configuration
 
@@ -191,6 +192,18 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 Never place the DeepSeek key in a Vite variable, browser bundle, committed file, screenshot, or client response. Restart the API after changing environment variables.
 
 Without `DEEPSEEK_API_KEY`, the endpoint still returns deterministic audit facts and the UI explains that AI generation is unavailable. All core task, workflow, and history features remain operational.
+
+## Deployment
+
+The repository-level `vercel.json` builds the web workspace and serves its Vite SPA routes correctly. Import the repository into Vercel with the repository root as the project root, then set:
+
+```dotenv
+VITE_API_BASE_URL=https://your-taskflow-api.example.com
+```
+
+The value is embedded into the browser build, must not contain secrets, and should not end with `/`. The API must allow requests from the Vercel domain; the current Express configuration enables CORS.
+
+Deploy the API to a long-running Node.js host with persistent storage. The included SQLite database is intended for a persistent filesystem and must not be deployed as ephemeral Vercel Functions storage. For a fully serverless deployment, migrate Prisma to a hosted database before moving the API to Vercel.
 
 ## Available commands
 
@@ -220,16 +233,7 @@ The ordered statuses are:
 to_do → pending → in_progress → done
 ```
 
-New tasks always start in `to_do`. Both optional workflow settings default to `false`, preserving the take-home requirement of one-step-forward transitions.
-
-| Backward | Skipping | Allowed transitions |
-| --- | --- | --- |
-| Off | Off | One step forward only |
-| On | Off | One step forward or backward |
-| Off | On | Any forward stage |
-| On | On | Any different stage |
-
-Same-status requests are always successful no-ops, independent of settings. Workflow settings apply only to future transitions and never rewrite previous history.
+New tasks always start in `to_do`. Only the immediately following status is allowed. Backward transitions and status skipping are always rejected by the backend. Same-status requests are successful no-ops and never create an audit event.
 
 ## Data model and integrity
 
@@ -245,15 +249,11 @@ Stores the immutable task ID, actor snapshot, previous status, new status, and U
 
 Stores the broader append-only operational timeline, including creation, task updates, status changes, escalation requests, escalation resolution, and deletion.
 
-### WorkflowSettings
-
-Stores exactly one global policy record with a fixed ID. Its two flags control backward transitions and status skipping.
-
 ### Atomic status update
 
 The backend performs a status transition inside one database transaction:
 
-1. Read the active task and current workflow policy.
+1. Read the active task.
 2. Return immediately for a same-status no-op.
 3. Validate the requested transition.
 4. Conditionally update the task using its previous status as a concurrency guard.
@@ -284,6 +284,7 @@ Successful JSON responses use `{ "data": ... }`. Errors use `{ "error": { "code"
 | `GET` | `/api/health` | Service health check |
 | `GET` | `/api/actors` | List predefined actors |
 | `GET` | `/api/tasks` | List active tasks |
+| `GET` | `/api/tasks/deleted` | List deleted tasks for read-only history access |
 | `GET` | `/api/tasks/:id` | Read one active task |
 | `POST` | `/api/tasks` | Create a task in `to_do` |
 | `PATCH` | `/api/tasks/:id` | Update operational task fields |
@@ -294,8 +295,6 @@ Successful JSON responses use `{ "data": ... }`. Errors use `{ "error": { "code"
 | `GET` | `/api/activities` | Filter activity across tasks |
 | `GET` | `/api/metrics` | Read operational dashboard metrics |
 | `POST` | `/api/tasks/:id/ai-summary` | Generate a factual, optional audit explanation |
-| `GET` | `/api/settings/workflow` | Read the global workflow policy |
-| `PATCH` | `/api/settings/workflow` | Persist a new workflow policy |
 
 Important domain error codes include `VALIDATION_ERROR`, `TASK_NOT_FOUND`, `INVALID_STATUS_TRANSITION`, `CONCURRENT_MODIFICATION`, `AI_INSIGHT_UNAVAILABLE`, and `ROUTE_NOT_FOUND`.
 
@@ -312,7 +311,7 @@ AI Insights are contextual assistance, not an autonomous agent or a generic chat
 5. DeepSeek returns a short explanation in non-thinking mode.
 6. The UI labels the result as AI-generated and keeps the original activity visible.
 
-The provider prompt explicitly forbids inventing motivations, causes, intent, or unsupported events. The AI endpoint has no path to task, settings, or audit mutations.
+The provider prompt explicitly forbids inventing motivations, causes, intent, or unsupported events. The AI endpoint has no path to task or audit mutations.
 
 ### Failure behavior
 
@@ -327,8 +326,7 @@ Development follows TDD around business-critical behavior rather than chasing a 
 ### Domain tests
 
 - Default one-step-forward policy
-- Backward transitions and status skipping
-- Combined workflow settings
+- Rejection of backward transitions and status skipping
 - Same-status idempotency
 - Human-readable transition explanations
 
@@ -338,7 +336,7 @@ Development follows TDD around business-critical behavior rather than chasing a 
 - Valid status change and exactly one audit record
 - Same-status update without a new log or changed timestamp
 - Invalid actor and transition rejection
-- Workflow setting persistence and enforcement
+- Strict forward-only workflow enforcement
 - Soft deletion with retained history
 - Database rejection of audit update and deletion
 - Full transaction rollback when audit insertion fails
@@ -359,13 +357,9 @@ Automated tests never depend on the real DeepSeek service. Provider behavior is 
 
 SQLite makes the submission self-contained and gives reviewers real persistence and transactions without infrastructure setup. The cost is serialized writes and limited suitability for sustained concurrent traffic. WAL mode, a busy timeout, short transactions, and compare-and-set updates reduce risk but do not remove that ceiling.
 
-### Pessimistic status mutations
+### Optimistic status mutations
 
-Cards wait for backend confirmation before moving. This introduces a small delay but makes failure behavior predictable and avoids showing a state that never committed.
-
-### Global workflow configuration
-
-A singleton policy keeps the assignment focused. A multi-team product would need tenant/project ownership, versioned workflow definitions, and explicit migration rules.
+Cards move immediately while the request is processed and roll back if the backend rejects the change. This feels responsive while keeping persisted backend state authoritative.
 
 ### Actor dropdown without authentication
 

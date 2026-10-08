@@ -7,7 +7,6 @@ import { prisma as defaultPrisma } from './lib/prisma.js';
 import { AppError } from './lib/errors.js';
 import { createTaskSchema, updateStatusSchema, updateTaskSchema } from './modules/tasks/task.schema.js';
 import { TaskService } from './modules/tasks/task.service.js';
-import { workflowSettingsSchema } from './modules/settings/settings.schema.js';
 import { createAuditInsight } from './modules/insights/audit-insight.service.js';
 
 const ok = (data: unknown) => ({ data });
@@ -21,6 +20,7 @@ export function createApp(db: PrismaClient = defaultPrisma) {
   app.get('/api/health', (_req, res) => res.json(ok({ status: 'ok' })));
   app.get('/api/actors', (_req, res) => res.json(ok(ACTORS)));
   app.get('/api/tasks', async (_req, res) => res.json(ok(await tasks.list())));
+  app.get('/api/tasks/deleted', async (_req, res) => res.json(ok(await tasks.listDeleted())));
   app.get('/api/tasks/:id', async (req, res) => res.json(ok(await tasks.get(req.params.id))));
   app.post('/api/tasks', async (req, res) => {
     const task = await tasks.create(createTaskSchema.parse(req.body));
@@ -49,23 +49,6 @@ export function createApp(db: PrismaClient = defaultPrisma) {
     const task = await tasks.get(req.params.id);
     const logs = await db.auditLog.findMany({ where: { taskId: task.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     res.json(ok(await createAuditInsight(task, logs)));
-  });
-  app.get('/api/settings/workflow', async (_req, res) => {
-    const settings = await db.workflowSettings.findUnique({
-      where: { id: 1 },
-      select: { allowBackwardTransitions: true, allowStatusSkipping: true },
-    });
-    res.json(ok(settings));
-  });
-  app.patch('/api/settings/workflow', async (req, res) => {
-    const input = workflowSettingsSchema.parse(req.body);
-    const settings = await db.$transaction(async (tx) => tx.workflowSettings.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...input },
-      update: input,
-      select: { allowBackwardTransitions: true, allowStatusSkipping: true },
-    }));
-    res.json(ok(settings));
   });
 
   app.use((_req, _res, next) => next(new AppError(404, 'ROUTE_NOT_FOUND', 'Route was not found.')));

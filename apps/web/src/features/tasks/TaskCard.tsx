@@ -10,7 +10,7 @@ export function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
       <GripVertical className="drag-handle" size={16} aria-hidden="true"/>
       <span className="card-copy">
       <strong>{task.title}</strong>
-      {task.description && <span><AlignLeft size={14}/> {task.description}</span>}
+      {task.description && <span className="task-description"><AlignLeft size={14}/> <span>{task.description}</span></span>}
       <span className="task-meta">{task.assignee && <i><UserRound size={12}/>{task.assignee}</i>}{task.dueAt && <i className={task.status !== 'done' && new Date(task.dueAt) < new Date() ? 'overdue' : ''}><CalendarClock size={12}/>{new Date(task.dueAt).toLocaleDateString()}</i>}{task.requiresHumanAttention && <i className="attention"><AlertTriangle size={12}/>Attention</i>}</span>
       <em className={`priority ${task.priority}`}>{task.priority}</em>
       <small>TF-{task.id.slice(0, 5).toUpperCase()}</small>
@@ -25,7 +25,7 @@ export function TaskCardPreview({ task }: { task: Task }) {
       <GripVertical className="drag-handle" size={16}/>
       <span className="card-copy">
         <strong>{task.title}</strong>
-        {task.description && <span><AlignLeft size={14}/> {task.description}</span>}
+        {task.description && <span className="task-description"><AlignLeft size={14}/> <span>{task.description}</span></span>}
         <small>TF-{task.id.slice(0, 5).toUpperCase()}</small>
       </span>
     </div>

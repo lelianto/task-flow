@@ -27,7 +27,7 @@ describe('workflow policy', () => {
   });
 
   it('explains why a transition is blocked', () => {
-    expect(explainTransition('done', 'pending', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Backward transitions are disabled');
-    expect(explainTransition('to_do', 'done', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Status skipping is disabled');
+    expect(explainTransition('done', 'pending', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Backward transitions are not allowed');
+    expect(explainTransition('to_do', 'done', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Status skipping is not allowed');
   });
 });

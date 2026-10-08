@@ -16,7 +16,6 @@ beforeEach(async () => {
   await db.auditLog.deleteMany();
   await db.$executeRawUnsafe("CREATE TRIGGER AuditLog_prevent_delete BEFORE DELETE ON AuditLog BEGIN SELECT RAISE(ABORT, 'Audit logs are immutable'); END");
   await db.task.deleteMany();
-  await db.workflowSettings.update({ where: { id: 1 }, data: { allowBackwardTransitions: false, allowStatusSkipping: false } });
 });
 afterAll(() => db.$disconnect());
 
@@ -73,6 +72,22 @@ describe('task API', () => {
     expect(response.body.data[0]).toMatchObject({ type: 'status.changed', actorId: 'alex.chen' });
   });
 
+  it('shows legacy audit logs in a task activity timeline without duplicating current events', async () => {
+    const legacyTask = await createTask('Legacy audit history');
+    await db.task.update({ where: { id: legacyTask.id }, data: { status: 'pending' } });
+    const legacyLog = await db.auditLog.create({ data: { taskId: legacyTask.id, actor: 'john.doe', fromStatus: 'to_do', toStatus: 'pending' } });
+
+    const legacyTimeline = await request(app).get(`/api/tasks/${legacyTask.id}/activities`);
+    expect(legacyTimeline.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `audit-${legacyLog.id}`, type: 'status.changed', actorId: 'john.doe', payload: { fromStatus: 'to_do', toStatus: 'pending' } }),
+    ]));
+
+    const currentTask = await createTask('Current activity history');
+    await request(app).patch(`/api/tasks/${currentTask.id}/status`).send({ status: 'pending', actor: 'john.doe' });
+    const currentTimeline = await request(app).get(`/api/tasks/${currentTask.id}/activities`);
+    expect(currentTimeline.body.data.filter((event: { type: string }) => event.type === 'status.changed')).toHaveLength(1);
+  });
+
   it('makes same-status updates idempotent without touching updatedAt', async () => {
     const task = await createTask();
     const update = await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'to_do', actor: 'john.doe' });
@@ -89,13 +104,12 @@ describe('task API', () => {
     expect(actor.status).toBe(400);
   });
 
-  it('respects configurable backward and skipping rules', async () => {
+  it('keeps the workflow strict even if legacy settings are relaxed', async () => {
     const task = await createTask();
-    await request(app).patch('/api/settings/workflow').send({ allowBackwardTransitions: false, allowStatusSkipping: true });
-    expect((await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'done', actor: 'jane.smith' })).status).toBe(200);
+    await db.workflowSettings.update({ where: { id: 1 }, data: { allowBackwardTransitions: true, allowStatusSkipping: true } });
+    expect((await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'done', actor: 'jane.smith' })).status).toBe(409);
+    expect((await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'pending', actor: 'jane.smith' })).status).toBe(200);
     expect((await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'to_do', actor: 'jane.smith' })).status).toBe(409);
-    await request(app).patch('/api/settings/workflow').send({ allowBackwardTransitions: true, allowStatusSkipping: true });
-    expect((await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'to_do', actor: 'jane.smith' })).status).toBe(200);
   });
 
   it('soft deletes tasks but retains audit history', async () => {
@@ -103,6 +117,7 @@ describe('task API', () => {
     await request(app).patch(`/api/tasks/${task.id}/status`).send({ status: 'pending', actor: 'alex.chen' });
     expect((await request(app).delete(`/api/tasks/${task.id}`)).status).toBe(204);
     expect((await request(app).get('/api/tasks')).body.data).toHaveLength(0);
+    expect((await request(app).get('/api/tasks/deleted')).body.data).toMatchObject([{ id: task.id }]);
     expect((await request(app).get(`/api/tasks/${task.id}/audit-logs`)).body.data).toHaveLength(1);
   });
 
@@ -160,6 +175,17 @@ describe('task API', () => {
       expect(response.body.data).toMatchObject({ available: true, generatedBy: 'deepseek-v4-flash', summary: 'One verified status change occurred.' });
       const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
       expect(requestBody.thinking).toEqual({ type: 'disabled' });
+      expect(requestBody.messages[0].content).toContain('Bahasa Indonesia');
+      expect(requestBody.messages[0].content).toContain('riwayat aktivitas permanen');
+      expect(requestBody.messages[0].content).not.toContain('source of truth');
+      const promptData = JSON.parse(requestBody.messages[1].content);
+      expect(promptData).toMatchObject({
+        task: { title: 'Prepare invoice', currentStatus: 'Pending' },
+        transitionCount: 1,
+        events: [{ actor: 'john.doe', from: 'To Do', to: 'Pending' }],
+      });
+      expect(promptData.events[0].waktuWib).toMatch(/WIB$/);
+      expect(promptData.events[0]).not.toHaveProperty('at');
     } finally {
       vi.unstubAllGlobals();
       if (originalKey) process.env.DEEPSEEK_API_KEY = originalKey;

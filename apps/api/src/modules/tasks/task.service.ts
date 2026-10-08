@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { canTransition, TASK_PRIORITIES, TASK_STATUSES, type Actor, type TaskPriority, type TaskSource, type TaskStatus } from '@taskflow/shared';
+import { canTransition, STRICT_WORKFLOW_POLICY, TASK_PRIORITIES, TASK_STATUSES, type Actor, type TaskPriority, type TaskSource, type TaskStatus } from '@taskflow/shared';
 import { AppError } from '../../lib/errors.js';
 
 export class TaskService {
@@ -7,6 +7,10 @@ export class TaskService {
 
   list() {
     return this.db.task.findMany({ where: { deletedAt: null }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+  }
+
+  listDeleted() {
+    return this.db.task.findMany({ where: { deletedAt: { not: null } }, orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }] });
   }
 
   async get(id: string) {
@@ -38,9 +42,7 @@ export class TaskService {
       const fromStatus = task.status as TaskStatus;
       if (fromStatus === toStatus) return { task, changed: false };
 
-      const settings = await tx.workflowSettings.findUnique({ where: { id: 1 } });
-      if (!settings) throw new AppError(500, 'SETTINGS_NOT_FOUND', 'Workflow settings are unavailable.');
-      if (!canTransition(fromStatus, toStatus, settings)) {
+      if (!canTransition(fromStatus, toStatus, STRICT_WORKFLOW_POLICY)) {
         throw new AppError(409, 'INVALID_STATUS_TRANSITION', `Cannot move from ${fromStatus} to ${toStatus} with the current workflow.`);
       }
 
@@ -112,7 +114,37 @@ export class TaskService {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 250,
     });
-    return rows.map(row => ({ ...row, payload: JSON.parse(row.payload) as Record<string, unknown> }));
+    const activities = rows.map(row => ({ ...row, payload: JSON.parse(row.payload) as Record<string, unknown> }));
+    if (!filters.taskId) return activities;
+
+    // Tasks created before ActivityEvent was introduced still have immutable audit logs.
+    // Expose unmatched logs as read-only activity items so their history is not hidden.
+    const auditLogs = await this.db.auditLog.findMany({
+      where: {
+        taskId: filters.taskId,
+        ...(filters.actor && { actor: filters.actor }),
+        ...(filters.from || filters.to ? { createdAt: { ...(filters.from && { gte: filters.from }), ...(filters.to && { lte: filters.to }) } } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    const legacyActivities = auditLogs.filter(log => !activities.some(event => {
+      if (event.type !== 'status.changed' || event.actorId !== log.actor) return false;
+      return event.payload.fromStatus === log.fromStatus
+        && event.payload.toStatus === log.toStatus
+        && Math.abs(event.createdAt.getTime() - log.createdAt.getTime()) < 2_000;
+    })).map(log => ({
+      id: `audit-${log.id}`,
+      taskId: log.taskId,
+      type: 'status.changed',
+      actorType: 'human',
+      actorId: log.actor,
+      payload: { fromStatus: log.fromStatus, toStatus: log.toStatus },
+      createdAt: log.createdAt,
+    }));
+
+    return [...activities, ...legacyActivities]
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id))
+      .slice(0, 250);
   }
 
   async metrics() {

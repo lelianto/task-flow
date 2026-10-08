@@ -22,6 +22,7 @@ export type Task = {
   escalationReason: string | null;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 };
 
 export type ActivityEvent = {

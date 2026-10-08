@@ -1,6 +1,7 @@
 export const TASK_STATUSES = ['to_do', 'pending', 'in_progress', 'done'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type WorkflowPolicy = { allowBackwardTransitions: boolean; allowStatusSkipping: boolean };
+export const STRICT_WORKFLOW_POLICY: WorkflowPolicy = { allowBackwardTransitions: false, allowStatusSkipping: false };
 
 export function canTransition(from: TaskStatus, to: TaskStatus, policy: WorkflowPolicy): boolean {
   if (from === to) return true;
@@ -22,7 +23,7 @@ export function explainTransition(from: TaskStatus, to: TaskStatus, policy: Work
     return 'This is the next step in the workflow.';
   }
   if (distance < 0 && !policy.allowBackwardTransitions) {
-    return 'Backward transitions are disabled. Enable them in Workflow Settings to move to an earlier status.';
+    return 'Backward transitions are not allowed. Tasks must follow the workflow in order.';
   }
-  return 'Status skipping is disabled. Move through each workflow stage in order, or enable skipping in Workflow Settings.';
+  return 'Status skipping is not allowed. Move through each workflow stage in order.';
 }
