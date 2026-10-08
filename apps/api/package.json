@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "typecheck": "prisma generate && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --max-warnings=0",
     "db:setup": "prisma generate && tsx src/db/prepare.ts && prisma migrate deploy && tsx src/db/ensure.ts"
   },

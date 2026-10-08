@@ -5,9 +5,10 @@ import { ACTORS } from '@taskflow/shared';
 import { ZodError } from 'zod';
 import { prisma as defaultPrisma } from './lib/prisma.js';
 import { AppError } from './lib/errors.js';
-import { createTaskSchema, updateStatusSchema } from './modules/tasks/task.schema.js';
+import { createTaskSchema, updateStatusSchema, updateTaskSchema } from './modules/tasks/task.schema.js';
 import { TaskService } from './modules/tasks/task.service.js';
 import { workflowSettingsSchema } from './modules/settings/settings.schema.js';
+import { createAuditInsight } from './modules/insights/audit-insight.service.js';
 
 const ok = (data: unknown) => ({ data });
 
@@ -29,11 +30,26 @@ export function createApp(db: PrismaClient = defaultPrisma) {
     const body = updateStatusSchema.parse(req.body);
     res.json(ok(await tasks.updateStatus(req.params.id, body.status, body.actor)));
   });
+  app.patch('/api/tasks/:id', async (req, res) => res.json(ok(await tasks.update(req.params.id, updateTaskSchema.parse(req.body)))));
   app.delete('/api/tasks/:id', async (req, res) => {
     await tasks.remove(req.params.id);
     res.status(204).send();
   });
   app.get('/api/tasks/:id/audit-logs', async (req, res) => res.json(ok(await tasks.auditLogs(req.params.id))));
+  app.get('/api/tasks/:id/activities', async (req, res) => res.json(ok(await tasks.activities({ taskId: req.params.id }))));
+  app.get('/api/activities', async (req, res) => res.json(ok(await tasks.activities({
+    actor: typeof req.query.actor === 'string' ? req.query.actor : undefined,
+    source: typeof req.query.source === 'string' ? req.query.source : undefined,
+    status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    from: typeof req.query.from === 'string' ? new Date(req.query.from) : undefined,
+    to: typeof req.query.to === 'string' ? new Date(req.query.to) : undefined,
+  }))));
+  app.get('/api/metrics', async (_req, res) => res.json(ok(await tasks.metrics())));
+  app.post('/api/tasks/:id/ai-summary', async (req, res) => {
+    const task = await tasks.get(req.params.id);
+    const logs = await db.auditLog.findMany({ where: { taskId: task.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+    res.json(ok(await createAuditInsight(task, logs)));
+  });
   app.get('/api/settings/workflow', async (_req, res) => {
     const settings = await db.workflowSettings.findUnique({
       where: { id: 1 },

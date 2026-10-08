@@ -12,10 +12,31 @@ model Task {
   title       String
   description String?
   status      String     @default("to_do")
+  assignee    String?
+  priority    String     @default("normal")
+  dueAt       DateTime?
+  source      String     @default("manual")
+  requiresHumanAttention Boolean @default(false)
+  escalationReason String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   deletedAt   DateTime?
   auditLogs   AuditLog[]
+  activities ActivityEvent[]
+}
+
+model ActivityEvent {
+  id        String   @id @default(uuid())
+  taskId    String
+  type      String
+  actorType String
+  actorId   String
+  payload   String   @default("{}")
+  createdAt DateTime @default(now())
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt, id])
+  @@index([type, createdAt])
 }
 
 model AuditLog {

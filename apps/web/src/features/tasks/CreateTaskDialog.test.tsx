@@ -10,6 +10,6 @@ describe('CreateTaskDialog', () => {
     await userEvent.type(screen.getByLabelText('Title'), '  Prepare invoice  ');
     await userEvent.type(screen.getByLabelText(/Description/), 'October billing');
     await userEvent.click(screen.getByRole('button', { name: 'Create task' }));
-    expect(onCreate).toHaveBeenCalledWith({ title: 'Prepare invoice', description: 'October billing' });
+    expect(onCreate).toHaveBeenCalledWith({ title: 'Prepare invoice', description: 'October billing', assignee: null, priority: 'normal', dueAt: null });
   });
 });

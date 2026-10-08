@@ -12,3 +12,17 @@ export function canTransition(from: TaskStatus, to: TaskStatus, policy: Workflow
 export function allowedDestinations(from: TaskStatus, policy: WorkflowPolicy): TaskStatus[] {
   return TASK_STATUSES.filter((to) => to !== from && canTransition(from, to, policy));
 }
+
+export function explainTransition(from: TaskStatus, to: TaskStatus, policy: WorkflowPolicy): string {
+  if (from === to) return 'This task is already in that status. No change or audit event will be created.';
+  const distance = TASK_STATUSES.indexOf(to) - TASK_STATUSES.indexOf(from);
+  if (canTransition(from, to, policy)) {
+    if (Math.abs(distance) > 1) return 'This move is allowed because status skipping is enabled.';
+    if (distance < 0) return 'This move is allowed because backward transitions are enabled.';
+    return 'This is the next step in the workflow.';
+  }
+  if (distance < 0 && !policy.allowBackwardTransitions) {
+    return 'Backward transitions are disabled. Enable them in Workflow Settings to move to an earlier status.';
+  }
+  return 'Status skipping is disabled. Move through each workflow stage in order, or enable skipping in Workflow Settings.';
+}

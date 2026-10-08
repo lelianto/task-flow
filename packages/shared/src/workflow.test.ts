@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canTransition } from './workflow.js';
+import { canTransition, explainTransition } from './workflow.js';
 
 describe('workflow policy', () => {
   it('allows only one step forward by default', () => {
@@ -24,5 +24,10 @@ describe('workflow policy', () => {
 
   it('treats the same status as an allowed idempotent no-op', () => {
     expect(canTransition('pending', 'pending', { allowBackwardTransitions: false, allowStatusSkipping: false })).toBe(true);
+  });
+
+  it('explains why a transition is blocked', () => {
+    expect(explainTransition('done', 'pending', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Backward transitions are disabled');
+    expect(explainTransition('to_do', 'done', { allowBackwardTransitions: false, allowStatusSkipping: false })).toContain('Status skipping is disabled');
   });
 });
